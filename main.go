@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 
+	dnsserv "lencauth/dns"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,7 +31,6 @@ func main() {
 	}
 
 	go router.Run(":" + port)
-	go router2.Run(":8081")
-
+	go dnsserv.ServeDNS(":53")
 	<-done
 }
