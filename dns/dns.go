@@ -3,10 +3,13 @@ package dnsserv
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // DNSHeader describes the request/response DNS header
@@ -58,6 +61,35 @@ func readDomainName(requestBuffer *bytes.Buffer) (string, error) {
 	return domainName, err
 }
 
+func writeDomainName(domain *DNSResourceRecord, b bytes.Buffer) error {
+
+	parts := strings.Split(domain.DomainName, ".")
+	for _, p := range parts {
+		b.WriteByte(uint8(len(p)))
+		b.WriteString(p)
+	}
+	b.WriteByte(0)
+	//	b.Write()
+	return nil
+}
+
+func makeAnswers(r []DNSResourceRecord) ([]DNSResourceRecord, error) {
+
+	var answers []DNSResourceRecord
+
+	for i, req := range r {
+		fmt.Println("l", i, req)
+		if req.Type == TypeTXT {
+			var a = "ZXC22"
+			answers = append(answers, DNSResourceRecord{req.DomainName, TypeTXT, req.Class, 1, uint16(len(a)), []byte(a)})
+		}
+	}
+
+	fmt.Println("answer:", answers)
+	return answers, nil
+
+}
+
 func handleDNSClient(n int, request []byte, sc *net.UDPConn, ca *net.UDPAddr) {
 
 	var requestBuffer = bytes.NewBuffer(request)
@@ -82,8 +114,56 @@ func handleDNSClient(n int, request []byte, sc *net.UDPConn, ca *net.UDPAddr) {
 		queryResourceRecords[idx].Type = binary.BigEndian.Uint16(requestBuffer.Next(2))
 		queryResourceRecords[idx].Class = binary.BigEndian.Uint16(requestBuffer.Next(2))
 		log.Print(queryResourceRecords[idx])
+
 	}
 
+	answers, _ := makeAnswers(queryResourceRecords)
+
+	var aflags uint16 = 0
+
+	error := 0
+	if len(answers) > 0 {
+		error = 3
+	}
+	bits := "100001010000" + fmt.Sprintf("%04b", error)
+	fmt.Println("bits", bits)
+	flags, _ := strconv.ParseUint(bits, 2, 16)
+	fmt.Println("flags=", flags)
+	aflags = uint16(flags)
+	//	aheader := DNSHeader{queryHeader.TransactionID, aflags, queryHeader.NumQuestions, uint16(len(answers)), 0, 0}
+	aheader := DNSHeader{queryHeader.TransactionID, aflags, queryHeader.NumQuestions, 0, 0, 0}
+
+	var binbuff bytes.Buffer
+	enc := gob.NewEncoder(&binbuff)
+
+	if err = enc.Encode(aheader); err == nil {
+
+		var ansbuff bytes.Buffer
+		//		if err = binary.Write(&ansbuff, binary.BigEndian, binbuff); err == nil {
+
+		if _, err = sc.WriteToUDP(binbuff.Bytes(), ca); err == nil {
+			fmt.Println("header=", aheader)
+			for _, a := range answers {
+				binbuff.Reset()
+				ansbuff.Reset()
+				if err = enc.Encode(a); err == nil {
+					//					if err = binary.Write(&ansbuff, binary.BigEndian, binbuff); err == nil {
+					if _, err = sc.WriteToUDP(binbuff.Bytes(), ca); err == nil {
+						fmt.Println("answer=", a)
+					} else {
+						fmt.Println(err)
+					}
+				}
+			}
+		} else {
+			fmt.Println(err)
+		}
+
+	} else {
+		fmt.Println(err)
+	}
+
+	//	if err = binary.Write(&binbuff, binary.BigEndian, aheader); err == nil {
 }
 
 func ServeDNS(serverAddress string) {
